@@ -1,4 +1,4 @@
-'''
+"""
 By Ben Schneider
 
 Simple python wrapper for Gnuplot
@@ -12,101 +12,114 @@ Example:
     Y = np.sin(X/(2*np.pi))
     Z = Y**2.0
     gp.s([X,Y,Z])  # saves data into tmp.dat
-    gp.c('plot "tmp.dat" u 1:2 w lp)  # send 'plot instructions to gnuplot'
-    gp.c('replot "tmp.dat" u 1:3' w lp)
-    gp.p('myfigure.ps')  # creates postscript file
+    gp.c("plot 'tmp.dat' u 1:2 w lp)  # send "plot instructions to Gnuplot"
+    gp.c("replot 'tmp.dat' u 1:3" w lp)
+    gp.p("myfigure.ps")  # creates postscript file
+"""
+from subprocess import Popen, PIPE
+from tempfile import TemporaryFile
 
 
-'''
+DEFAULT_TERM = "x11"  # change this if you use a different terminal
 
-from subprocess import Popen as _Popen, PIPE as _PIPE
 
-default_term = 'x11'  # change this if you use a different terminal
+class _GnuPlot:
+
+    def __init__(self, term=DEFAULT_TERM):
+        self.term = term
+        self.proc = Popen(
+            ["gnuplot", "-p"], stdin=PIPE, universal_newlines=True)
 
 
 class _FigureList(object):
 
     def __init__(self):
-        proc = _Popen(['gnuplot', '-p'], shell=False, stdin=_PIPE, universal_newlines=True)  # persitant -p
-        self.instance = {0 : [proc, default_term]}  # {figure number : [process, terminal type]}
-        self.n = 0  # currently selected Figure
-        # Format:
-        # instance[self.n][0] = process
-        # instance[self.n][1] = terminal
+        instance = _GnuPlot()
+        self.instances = {0: instance}
+        self.current_idx = 0
+        self.current_fig = instance
+
+    def get_figure(self, idx=None):
+        """Get a Gnuplot instance.
+
+        If `idx` is `None` (default):
+            a new `_Instance` is created at max(self.instances)+1.
+        If `idx` is not `None` and corresponding `_Instance` exists:
+            the `_Instance` is returned.
+        If `idx` is not `None` but corresponding `_Instance` doesn't exist:
+            a new `_Instance` is created at `idx` and is returned.
+        In all cases, the new instance/figure becomes current.
+        """
+        if idx is None:  # create new figure if no number was given
+            idx = max(self.instances) + 1
+        instance = self.instances.setdefault(idx, _GnuPlot())
+        self.current_idx = idx
+        self.current_fig = instance
+        return instance
 
 
 def figure(number=None):
-    '''Make Gnuplot plot in a new Window or update a defined one figure(num=None, term='x11'):
+    """Create a new figure or update an existing one.
+
     >>> figure(2)  # would create or update figure 2
     >>> figure()  # simply creates a new figure
     returns the new figure number
-    '''
-    if not isinstance(number, int):  # create new figure if no number was given
-        number = max(fl.instance) + 1
-
-    if number not in fl.instance:  # number is new
-        proc = _Popen(['gnuplot', '-p'], shell=False, stdin=_PIPE, universal_newlines=True)
-        fl.instance[number] = [proc, default_term]
-
-    fl.n = number
-    c('set term ' + str(fl.instance[fl.n][1]) + ' ' + str(fl.n))
+    """
+    fig = fl.get_figure(number)
+    c("set term {} {}".format(fig.term, number))
     return number
 
 
 def c(command):
-    '''
-    Send command to gnuplot
-    >>> c('plot sin(x)')
-    >>> c('plot "tmp.dat" u 1:2 w lp)
-    '''
-    proc = fl.instance[fl.n][0]  # this is where the process is
-    proc.stdin.write(command + '\n')  # \n 'send return in python 2.7'
-    proc.stdin.flush()  # send the command in python 3.4+
+    """Send a command to Gnuplot.
 
-def s(data, filename='tmp.dat'):
-    '''
-    saves numbers arrays and text into filename (default = 'tmp.dat)
-    (assumes equal sizes and 2D data sets)
-    >>> s(data, filename='tmp.dat')  # overwrites/creates tmp.dat
-    '''
-    file = open(filename, 'w')
-    columns = len(data)
-    rows = len(data[0])
-    for j in range(rows):
-        for i in range(columns):
-            file.write(str(data[i][j]))
-            file.write(' ')
-        file.write('\n')
-        if j % 1000 == 0 :
-            file.flush()  # write once after every 1000 entries
-    file.close()  # write the rest
-
-def plot(data, filename='tmp.dat'):
-    ''' Save data into filename (default = 'tmp.dat') and send plot instructions to Gnuplot'''
-    s(data, filename)
-    c('plot "' + filename + '" w lp')
+    >>> c("plot sin(x)")
+    >>> c("plot 'tmp.dat' u 1:2 w lp")
+    """
+    proc = fl.current_fig.proc
+    print(command, file=proc.stdin)
 
 
-def p(filename='tmp.ps', width=14, height=9, fontsize=12, term=default_term):
-    '''Script to make gnuplot print into a postscript file
-    >>> p(filename='myfigure.ps')  # overwrites/creates myfigure.ps
-    '''
-    c('set term postscript size ' + str(width) + 'cm, ' + str(height) + 'cm color solid ' +
-      str(fontsize) + " font 'Calibri';")
-    c('set out "' + filename + '";')
-    c('replot;')
-    c('set term ' + str(term) + '; replot')
+def s(data, filename="tmp.dat"):
+    """Write data to $filename.
+
+    >>> s(data, filename="tmp.dat")  # overwrites/creates tmp.dat
+    """
+    with open(filename, "w") as fh:
+        for items in zip(*data):
+            print(*items, file=fh)
 
 
-def pdf(filename='tmp.pdf', width=14, height=9, fontsize=12, term=default_term):
-    '''Script to make gnuplot print into a pdf file
-    >>> pdf(filename='myfigure.pdf')  # overwrites/creates myfigure.pdf
-    '''
-    c('set term pdf enhanced size ' + str(width) + 'cm, ' + str(height) + 'cm color solid fsize ' +
-      str(fontsize) + " fname 'Helvetica';")
-    c('set out "' + filename + '";')
-    c('replot;')
-    c('set term ' + str(term) + '; replot')
+def plot(data):
+    """Write data to a file and send plot instruction to Gnuplot."""
+    with TemporaryFile() as f:
+        s(data, f.name)
+        c("plot '{}' w lp".format(f.name))
+
+
+def p(filename="tmp.ps", width=14, height=9, fontsize=12, term=DEFAULT_TERM):
+    """Script to make Gnuplot print into a postscript file
+    >>> p(filename="myfigure.ps")  # overwrites/creates myfigure.ps
+    """
+    c("set term postscript size {width}cm, {height}cm color "
+      "solid {fontsize} font 'Calibri';".format(
+          height=height, width=width, fontsize=fontsize))
+    c("set out '{}';".format(filename))
+    c("replot;")
+    c("set term {}; replot".format(term))
+
+
+def pdf(filename="tmp.pdf", width=14,
+        height=9, fontsize=12, term=DEFAULT_TERM):
+    """Script to make Gnuplot print into a pdf file
+    >>> pdf(filename="myfigure.pdf")  # overwrites/creates myfigure.pdf
+    """
+    c("set term pdf enhanced size {width}cm, {height}cm "
+      "color solid fsize {fontsize} fname 'Helvetica';".format(
+          width=width, height=height, fontsize=fontsize))
+    c("set out '{}';".format(filename))
+    c("replot;")
+    c("set term {}; replot".format(term))
 
 
 fl = _FigureList()
